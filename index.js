@@ -1,50 +1,44 @@
-const SerialPort = require('serialport').SerialPort;
-const ReadlineParser = require('@serialport/parser-readline').ReadlineParser;
-const axios = require('axios');
-const readlineSync = require('readline-sync');
+const express = require('express');
+const mongoose = require('mongoose');
 
+const app = express();
+app.use(express.json());
 
-const SERIAL_PORT = readlineSync.question('Enter the COM port (e.g., COM3): ');
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+  console.error("MONGODB_URI environment variable not set");
+  process.exit(1);
+}
 
-const BAUD_RATE = 9600;  
-const API_URL = 'https://key-management-mz1o.onrender.com/api/logEvent';  
+mongoose.connect(mongoUri, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => console.log("Connected to MongoDB"))
+  .catch((err) => {
+    console.error("Failed to connect to MongoDB:", err);
+    process.exit(1);
+  });
 
-
-const port = new SerialPort({
-  path: SERIAL_PORT,
-  baudRate: BAUD_RATE,
+const eventSchema = new mongoose.Schema({
+  uid: String,
+  keys: Number,
+  event: String,
+  time: String
 });
 
+const Event = mongoose.model('Event', eventSchema);
 
-const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }));
-
-port.on('open', () => {
-  console.log(`📡 Listening to Arduino on ${SERIAL_PORT}...`);
-});
-
-parser.on('data', async (line) => {
-  const trimmed = line.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    try {
-      const data = JSON.parse(trimmed);
-      console.log('📨 Received:', data);
-
-      try {
-        const response = await axios.post(API_URL, data);
-        console.log('✅ API response:', response.data);
-      } catch (apiErr) {
-        console.error('❌ API error:', apiErr.response?.data || apiErr.message);
-      }
-    } catch (err) {
-      console.warn('⚠️ Invalid JSON:', trimmed);
-    }
+app.post('/api/logEvent', async (req, res) => {
+  try {
+    const newEvent = new Event(req.body);
+    await newEvent.save();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-port.on('error', (err) => {
-  console.error('❌ Serial port error:', err.message);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
 });
-
-
-console.log("Press Ctrl+C to exit.");
-setInterval(() => {}, 1 << 30);
